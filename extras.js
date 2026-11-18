@@ -34,3 +34,39 @@ function addExtras(){
   renderMain=function(){orig.apply(this,arguments);try{addExtras()}catch(e){}};
   try{addExtras()}catch(e){}
 })();
+
+// ===== Aviso aberto pela notificação =====
+var pendingNotice=null;
+function takeNotice(n){
+  try{if(typeof n==='string')n=JSON.parse(n)}catch(e){return}
+  if(!n||!n.title)return;pendingNotice=n;showNoticeIfReady();
+}
+function showNoticeIfReady(){
+  if(!pendingNotice||typeof currentUser==='undefined'||!currentUser||!document.getElementById('mc'))return;
+  const n=pendingNotice;pendingNotice=null;openNotice(n);
+}
+function openNotice(n){
+  if(n.go==='expenses'||n.go==='dashboard'||n.go==='income')activeTab=n.go;
+  if(n.month&&/^\d{4}-\d{2}$/.test(n.month))activeMonth=n.month;
+  updMonthLbl();updTabs();renderMain();
+  const old=document.getElementById('notice-ov');if(old)old.remove();
+  const ov=document.createElement('div');ov.id='notice-ov';ov.className='modal-overlay';ov.style.zIndex='350';
+  const items=(n.items||[]).slice(0,12).map(function(i){
+    return '<div style="display:flex;justify-content:space-between;gap:10px;font-size:13px;padding:7px 0;border-bottom:1px solid var(--border)"><span>'+esc(i.name)+(i.date?' <span style="color:var(--text3);font-size:11px">· '+fmtD(i.date)+'</span>':'')+'</span><span style="font-family:var(--mono)">'+fmt(i.amount)+'</span></div>';
+  }).join('');
+  ov.innerHTML='<div class="modal" style="max-width:420px"><div class="modal-title">🔔 '+esc(n.title)+'</div>'
+    +(n.body?'<div style="font-size:13px;color:var(--text2);margin-bottom:12px;line-height:1.5">'+esc(n.body)+'</div>':'')
+    +(items?'<div style="margin-bottom:6px">'+items+'</div>':'')
+    +'<div class="modal-actions"><button class="btn-primary" data-close="1">'+(n.go==='expenses'?'Ver despesas':'Fechar')+'</button></div></div>';
+  document.body.appendChild(ov);
+  ov.addEventListener('click',function(e){if(e.target===ov||e.target.closest('[data-close]'))ov.remove()});
+}
+(function(){
+  try{
+    if('serviceWorker' in navigator)navigator.serviceWorker.addEventListener('message',function(e){if(e.data&&e.data.type==='notice')takeNotice(e.data.n)});
+    const q=new URLSearchParams(location.search).get('aviso');
+    if(q){history.replaceState(null,'',location.pathname);takeNotice(q)}
+  }catch(e){}
+  const orig2=renderMain;
+  renderMain=function(){orig2.apply(this,arguments);try{showNoticeIfReady()}catch(e){}};
+})();
