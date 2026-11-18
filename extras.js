@@ -46,6 +46,7 @@ function showNoticeIfReady(){
   const n=pendingNotice;pendingNotice=null;openNotice(n);
 }
 function openNotice(n){
+  markAvisoRead(n);
   if(n.go==='expenses'||n.go==='dashboard'||n.go==='income')activeTab=n.go;
   if(n.month&&/^\d{4}-\d{2}$/.test(n.month))activeMonth=n.month;
   updMonthLbl();updTabs();renderMain();
@@ -69,4 +70,27 @@ function openNotice(n){
   }catch(e){}
   const orig2=renderMain;
   renderMain=function(){orig2.apply(this,arguments);try{showNoticeIfReady()}catch(e){}};
+})();
+
+// Caixa de avisos guardados no servidor: mostra o último não lido ao abrir o app
+var avisoSeen={};
+function markAvisoRead(n){
+  if(!n||!n.id||avisoSeen[n.id])return;avisoSeen[n.id]=1;
+  try{sbFetch('/rest/v1/avisos?id=eq.'+n.id,{method:'PATCH',headers:{'Prefer':'return=minimal'},body:JSON.stringify({read:true})}).catch(function(){})}catch(e){}
+}
+var avisoBusy=false;
+async function checkAvisos(){
+  if(avisoBusy||typeof currentUser==='undefined'||!currentUser||!currentSession)return;
+  avisoBusy=true;
+  try{
+    const since=new Date(Date.now()-48*3600e3).toISOString();
+    const r=await sbFetch('/rest/v1/avisos?read=eq.false&created_at=gte.'+encodeURIComponent(since)+'&order=created_at.desc&limit=1&select=id,payload');
+    if(r&&r.length&&!avisoSeen[r[0].id]){const n=Object.assign({},r[0].payload,{id:r[0].id});pendingNotice=n;showNoticeIfReady()}
+  }catch(e){}
+  avisoBusy=false;
+}
+document.addEventListener('visibilitychange',function(){if(!document.hidden)setTimeout(checkAvisos,600)});
+(function(){
+  const orig3=renderMain;let first=true;
+  renderMain=function(){orig3.apply(this,arguments);if(first&&typeof currentUser!=='undefined'&&currentUser){first=false;setTimeout(checkAvisos,800)}};
 })();
