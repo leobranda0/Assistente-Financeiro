@@ -10,8 +10,8 @@ var MCATS={};        // estabelecimento -> categoria aprendida
 var loaded=false;
 
 // ---------- utilidades ----------
-function money(s){s=String(s).replace(/R\$\s*/,'').trim();var neg=/^-/.test(s)||/-$/.test(s);s=s.replace(/-/g,'').trim();var v=parseFloat(s.replace(/\./g,'').replace(',','.'));return neg?-v:v}
-var MONEY_RE=/^-?\s*(R\$\s*)?-?\d{1,3}(\.\d{3})*,\d{2}\s*-?$/;
+function money(s){s=String(s).replace(/R\$\s*/,'').trim();var neg=/^[-+]/.test(s)||/-$/.test(s);s=s.replace(/[-+]/g,'').trim();var v=parseFloat(s.replace(/\./g,'').replace(',','.'));return neg?-v:v}
+var MONEY_RE=/^[-+]?\s*(R\$\s*)?-?\d{1,3}(\.\d{3})*,\d{2}\s*-?$/;
 function isMoney(t){return MONEY_RE.test(String(t).trim())}
 function mKey(desc){return String(desc).toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g,'').replace(/\d{2}\/\d{2}/g,'').replace(/[^a-z0-9*]+/g,' ').trim().slice(0,40)}
 function itemsOf(expId,mk){return ITEMS.filter(function(i){return i.expense_id===expId&&i.month===mk})}
@@ -60,10 +60,16 @@ function loadPdfJs(){
 }
 async function pdfLines(file){
   var lib=await loadPdfJs();
-  var buf=await file.arrayBuffer();
+  var buf=new Uint8Array(await file.arrayBuffer());
+  // alguns bancos (ex.: Inter) entregam o PDF com bytes extras antes do início
+  var st=-1;for(var b=0;b<buf.length-4;b++){if(buf[b]===37&&buf[b+1]===80&&buf[b+2]===68&&buf[b+3]===70){st=b;break}}
+  if(st>0)buf=buf.subarray(st);
   var doc;
   try{doc=await lib.getDocument({data:buf}).promise}
-  catch(e){if(e&&e.name==='PasswordException')throw new Error('Este PDF tem senha. Abra no app do banco e baixe uma versão sem senha.');throw e}
+  catch(e){
+    if(e&&e.name==='PasswordException')throw new Error('Este PDF tem senha. Abra a fatura no iPhone, toque em Compartilhar › Imprimir › Compartilhar › Salvar em Arquivos e importe o arquivo novo.');
+    throw new Error('Não consegui abrir este arquivo como PDF. Abra a fatura no iPhone, toque em Compartilhar › Imprimir › Compartilhar › Salvar em Arquivos e importe o arquivo novo.');
+  }
   var lines=[];
   for(var p=1;p<=doc.numPages;p++){
     var page=await doc.getPage(p);var tc=await page.getTextContent();
@@ -73,17 +79,21 @@ async function pdfLines(file){
       var x=it.transform[4],y=it.transform[5];
       var row=null;for(var i=0;i<rows.length;i++){if(Math.abs(rows[i].y-y)<2.5){row=rows[i];break}}
       if(!row){row={y:y,items:[]};rows.push(row)}
-      row.items.push({x:x,t:t});
+      row.items.push({x:x,t:t,w:it.width||0});
     });
     rows.sort(function(a,b){return b.y-a.y});
-    rows.forEach(function(r){r.items.sort(function(a,b){return a.x-b.x});lines.push(r.items.map(function(i){return i.t}))});
+    rows.forEach(function(r){
+      r.items.sort(function(a,b){return a.x-b.x});
+      var m=[];r.items.forEach(function(i){var l=m[m.length-1];if(l&&i.x-(l.x+l.w)<1.2&&i.x-(l.x+l.w)>-3){l.t+=i.t;l.w=i.x+i.w-l.x}else m.push({x:i.x,t:i.t,w:i.w})});
+      lines.push(m.map(function(i){return i.t}));
+    });
   }
   return lines;
 }
 
 // Interpreta linhas de qualquer fatura: data no início, descrição, valor
 var DATE_RE=/^(\d{2})\/(\d{2})(?:\/(\d{2,4}))?$/;
-var DATE_TXT_RE=/^(\d{2})\s*(?:de\s+)?(jan|fev|mar|abr|mai|jun|jul|ago|set|out|nov|dez)[a-z]*\.?$/i;
+var DATE_TXT_RE=/^(\d{1,2})\s*(?:de\s+)?(jan|fev|mar|abr|mai|jun|jul|ago|set|out|nov|dez)[a-z]*\.?(?:\s*(?:de\s+)?(\d{4}))?$/i;
 var MESES={jan:1,fev:2,mar:3,abr:4,mai:5,jun:6,jul:7,ago:8,set:9,out:10,nov:11,dez:12};
 var PAY_RE=/(pagto|pagamento|pgto|pag fatura|credito de pagamento|pagamento recebido|deb em c\/c)/i;
 function parseLines(lines,dueMk){
@@ -101,13 +111,15 @@ function parseLines(lines,dueMk){
     var m0=/^(\d{2}\/\d{2})\s+(.+)$/.exec(tk[0]);if(m0)tk.splice(0,1,m0[1],m0[2]);
     var d=null,start=1,mm;
     if((mm=DATE_RE.exec(tk[0]))){d={dd:+mm[1],mo:+mm[2],y:mm[3]?+mm[3]:null}}
-    else if(tk.length>1&&(mm=DATE_TXT_RE.exec(tk[0]+' '+tk[1]))){d={dd:+mm[1],mo:MESES[mm[2].toLowerCase()],y:null};start=2}
-    else if((mm=DATE_TXT_RE.exec(tk[0]))){d={dd:+mm[1],mo:MESES[mm[2].toLowerCase()],y:null}}
+    else if((mm=DATE_TXT_RE.exec(tk[0]))){d={dd:+mm[1],mo:MESES[mm[2].toLowerCase()],y:mm[3]?+mm[3]:null}}
+    else if(tk.length>1&&(mm=DATE_TXT_RE.exec(tk[0]+' '+tk[1]))){d={dd:+mm[1],mo:MESES[mm[2].toLowerCase()],y:mm[3]?+mm[3]:null};start=2}
     if(!d||d.mo<1||d.mo>12||d.dd<1||d.dd>31)return;
     var desc=[],extra=[],val=null,inst=null,i;
     for(i=start;i<tk.length;i++){
       var t=tk[i];
       if(isMoney(t)){val=money(t);if(tk[i+1]==='-'||/^-\s*$/.test(tk[i+1]||''))val=-Math.abs(val);break}
+      if(t==='-'||t==='–')continue;
+      var pp=/^\(?\s*parc(?:ela)?\.?\s*(\d{1,2})\s*(?:\/|de)\s*(\d{1,2})\s*\)?$/i.exec(t);if(pp&&!inst){inst=(+pp[1])+'/'+(+pp[2]);continue}
       if(/^\d{1,2}\/\d{1,2}$/.test(t)&&!inst){inst=t;continue}
       var pi=/^(?:parc(?:ela)?\.?\s*)?(\d{1,2})\s*(?:\/|de)\s*(\d{1,2})$/i.exec(t);if(pi&&!inst){inst=pi[1]+'/'+pi[2];continue}
       if(desc.length===0)desc.push(t);else if(/^\*/.test(t)&&!extra.length)desc.push(t);else extra.push(t);
