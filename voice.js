@@ -181,3 +181,6 @@ function dueBannerHTML(){
   return '<div class="card" style="border-color:var(--orange-border);background:var(--orange-bg)"><div class="section-lbl" style="color:var(--orange)"><i class="ti ti-bell-ringing"></i> Vencimentos próximos</div>'
   +l.slice(0,6).map(function(x){return '<div style="display:flex;justify-content:space-between;gap:10px;font-size:13px;padding:4px 0"><span><b>'+x.w+'</b> · '+esc(x.e.description)+'</span><span style="font-family:var(--mono)">'+fmt(x.e.amount)+'</span></div>'}).join('')+'</div>';
 }
+
+// ===== Carrega extras =====
+(function(){var s=document.createElement('script');s.src='extras.js';s.defer=true;document.head.appendChild(s)})();
