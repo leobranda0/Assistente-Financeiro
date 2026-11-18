@@ -96,12 +96,12 @@ function parseVoice(raw,now,mode){
 
 let vRec=null,vLast=null,vMode='expense';
 const V_IOS=/iPad|iPhone|iPod/.test(navigator.userAgent)||(navigator.platform==='MacIntel'&&navigator.maxTouchPoints>1);
-function vUseApp(){try{const v=localStorage.getItem('voice_app_mic');if(v==='1')return true;if(v==='0')return false}catch(e){}return !V_IOS}
-function vSetApp(on){try{localStorage.setItem('voice_app_mic',on?'1':'0')}catch(e){}if(!on)vKill();vRefreshHint()}
+function vUseApp(){try{const v=localStorage.getItem('voice_mode');if(v==='kbd')return false}catch(e){}return true}
+function vSetApp(on){try{localStorage.setItem('voice_mode',on?'app':'kbd')}catch(e){}if(!on)vKill();vRefreshHint()}
 function vRefreshHint(){
   const h=$('voice-hint');if(!h)return;const app=vUseApp();
   h.innerHTML=app?'Toque no microfone e fale. Ex.: “100 reais de almoço pago hoje”.':'Toque no microfone <b>do teclado</b> e fale. Ex.: “100 reais de almoço pago hoje”.';
-  const t=$('voice-switch');if(t)t.textContent=app?'Usar o ditado do teclado (recomendado no iPhone/iPad)':'Usar o microfone do app (pode deixar a bolinha laranja ligada)';
+  const t=$('voice-switch');if(t)t.textContent=app?'Prefere usar o microfone do teclado? Toque aqui':'Voltar a usar o microfone do app';
 }
 function voiceStart(){if(vUseApp()){voiceMic()}else{const t=$('voice-text');if(t)t.focus()}}
 function voiceToggleMode(){vSetApp(!vUseApp());if(!vUseApp()){const t=$('voice-text');if(t)t.focus()}}
