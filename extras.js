@@ -1,3 +1,5 @@
+(function(){
+if(window.__exLoaded)return;window.__exLoaded=1;
 // ===== Extras: exportar CSV =====
 function csvCell(v){v=String(v==null?'':v);return /[;"\n\r]/.test(v)?'"'+v.replace(/"/g,'""')+'"':v}
 function csvNum(n){return String(Number(n||0).toFixed(2)).replace('.',',')}
@@ -93,4 +95,7 @@ document.addEventListener('visibilitychange',function(){if(!document.hidden)setT
 (function(){
   const orig3=renderMain;let first=true;
   renderMain=function(){orig3.apply(this,arguments);if(first&&typeof currentUser!=='undefined'&&currentUser){first=false;setTimeout(checkAvisos,800)}};
+})();
+
+window.takeNotice=takeNotice;
 })();
