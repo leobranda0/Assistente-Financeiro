@@ -19,8 +19,8 @@ function itemsOf(expId,mk){return ITEMS.filter(function(i){return i.expense_id==
 // categorias por palavras de fatura (antes do detector geral do app)
 var FAT_RULES=[
   ['Outros',/(amazonmktplc|amazon ?mktplc|amazon br|mercado ?livre|mercadolivre|shopee|magalu|aliexpress|americanas|casas bahia)/],
-  ['Alimentação',/(ifd\*|ifood|99food|rappi|daki|super ?nosso|supermerc|mercado|padaria|restaurante|lanchonete|burger|pizza|sushi|cafe|bar\b|acougue|hortifruti|sorvet|doceria|confeitaria|emporio|bistro|grill|churrasc)/],
-  ['Transporte',/(posto|combust|shell|ipiranga|petrobras|br mania|uber|99 ?app|99pop|cabify|estaciona|estapar|sem parar|conectcar|veloe|pedagio|autopass|localiza|movida)/],
+  ['Alimentação',/(ifd\*|ifood|99food|rappi|daki|super ?nosso|supermerc|mercado|padaria|restaurante|lanchonete|burger|pizza|sushi|cafe|bar\b|acougue|hortifruti|sorvet|doceria|confeit|emporio|bistro|grill|churrasc|izakaya|alimentos|atacad|hipermerc|delivery)/],
+  ['Transporte',/(posto|combust|shell|ipiranga|petrobras|br mania|uber|99 ?app|99pop|cabify|estaciona|estapar|sem parar|conectcar|veloe|pedagio|autopass|localiza|movida|sixt|hertz|avis\b|unidas|rent a car|\bzul\b|allpark|tagitau)/],
   ['Assinaturas',/(apple\.com|netflix|spotify|prime video|amazon prime|disney|hbo|max\.com|youtube|google \*|globoplay|deezer|clubelivelo|icloud|microsoft|adobe|canva|chatgpt|openai|anthropic|claude)/],
   ['Saúde',/(drogaria|farmacia|droga|raia|pacheco|araujo|panvel|hospital|clinica|laborat|odonto|dentist|medic|academia|smart ?fit|bluefit|suplem)/],
   ['Moradia',/(conta vivo|vivo|claro|tim\b|oi\b|net\b|cemig|copasa|sabesp|enel|light|condominio|aluguel|leroy|telha norte|c&c|tok ?stok|etna)/],
@@ -107,23 +107,34 @@ function parseLines(lines,dueMk){
     for(var k=1;k<l.length;k++)if(isMoney(l[k].t)){var e=Math.round((l[k].x+l[k].w)/4)*4;edges[e]=(edges[e]||0)+1;break}
   });
   var colEdge=null,best=0;Object.keys(edges).forEach(function(e){if(edges[e]>best){best=edges[e];colEdge=+e}});
+  var future=false;
+  var FUT_RE=/(pr[oó]ximas faturas|lan[çc]amentos futuros|parcelas? futuras?|compras parceladas\s*-\s*pr[oó]x|saldo de compras parceladas|pr[oó]ximos lan[çc]amentos)/i;
   lines.forEach(function(objs){
     var tokens=objs.map(function(o){return o.t});
     var joined=tokens.join(' ');
+    // seção de lançamentos de faturas futuras: ignora até começar outro bloco de cartão
+    if(FUT_RE.test(joined)&&!DATE_RE.test(tokens[0])&&joined.length<70&&!tokens.some(isMoney)){future=true;return}
     // portador (cartão adicional): "NOME  Cartão 3747 XXXXXX 38277"
     var hm=/^(.*?)\s*cart[aã]o\s+(?:final\s+)?[\dX*•\. ]{4,}/i.exec(joined);
-    if(hm&&!DATE_RE.test(tokens[0])){var nm=hm[1].trim();holder=nm&&nm.length>2&&!/n[uú]mero/i.test(nm)?nm:null}
+    if(hm&&!DATE_RE.test(tokens[0])){var nm=hm[1].trim();holder=nm&&nm.length>2&&!/n[uú]mero/i.test(nm)?nm:null;future=false}
+    if(/lan[çc]amentos (atuais|nacionais|internacionais|no cart)|despesas da fatura/i.test(joined)&&!FUT_RE.test(joined))future=false;
+    if(future)return;
     // totais impressos na fatura (para conferir a soma)
     if(/total/i.test(joined))tokens.forEach(function(t){if(isMoney(t))totals.push(Math.abs(money(t)))});
     // separa data colada na descrição: "02/10 APP *GWX20UVW"
-    var to=objs.slice();
+    var queue=[objs.slice()];
+    while(queue.length){var to=queue.shift();if(!to.length)continue;
     var m0=/^(\d{2}\/\d{2})\s+(.+)$/.exec(to[0].t);if(m0)to.splice(0,1,{t:m0[1],x:to[0].x,w:0},{t:m0[2],x:to[0].x,w:to[0].w});
     var tk=to.map(function(o){return o.t});
     var d=null,start=1,mm;
     if((mm=DATE_RE.exec(tk[0]))){d={dd:+mm[1],mo:+mm[2],y:mm[3]?+mm[3]:null}}
     else if((mm=DATE_TXT_RE.exec(tk[0]))){d={dd:+mm[1],mo:MESES[mm[2].toLowerCase()],y:mm[3]?+mm[3]:null}}
     else if(tk.length>1&&(mm=DATE_TXT_RE.exec(tk[0]+' '+tk[1]))){d={dd:+mm[1],mo:MESES[mm[2].toLowerCase()],y:mm[3]?+mm[3]:null};start=2}
-    if(!d||d.mo<1||d.mo>12||d.dd<1||d.dd>31)return;
+    if(!d){ // data no meio da linha (ex.: título de seção à esquerda)
+      for(var q2=1;q2<tk.length-2;q2++){if(DATE_RE.test(tk[q2])&&!/^\d{2}\/\d{2}\/\d{2,4}$/.test(tk[q2])&&tk.slice(q2+2).some(isMoney)){queue.push(to.slice(q2));break}}
+      continue;
+    }
+    if(d.mo<1||d.mo>12||d.dd<1||d.dd>31)continue;
     // valor: o que estiver na coluna de R$ (evita pegar valor em moeda estrangeira ou da lateral)
     var vi=-1,firstM=-1;
     for(var k=start;k<to.length;k++){if(isMoney(to[k].t)){if(firstM<0)firstM=k;if(colEdge!==null&&to[k].w&&Math.abs(to[k].x+to[k].w-colEdge)<=14){vi=k;break}}}
@@ -131,7 +142,10 @@ function parseLines(lines,dueMk){
     var desc=[],extra=[],val=null,inst=null,i;
     for(i=start;i<tk.length;i++){
       var t=tk[i];
-      if(i===vi){val=money(t);if(tk[i+1]==='-'||/^-\s*$/.test(tk[i+1]||''))val=-Math.abs(val);break}
+      if(i===vi){val=money(t);var nx=i+1;if(tk[i+1]==='-'||/^-\s*$/.test(tk[i+1]||'')){val=-Math.abs(val);nx++}
+        // outra transação na mesma linha (fatura em duas colunas)
+        for(var q=nx;q<tk.length;q++){if(DATE_RE.test(tk[q])||/^\d{2}\/\d{2}\s/.test(tk[q])){queue.push(to.slice(q));break}}
+        break}
       if(isMoney(t)||/^[A-Z]{3}$/.test(t)&&/^(EUR|USD|GBP|ARS|CLP|CAD|AUD|JPY|CHF|MXN|UYU|COP|PEN)$/.test(t)||/^\d+,\d{3,}$/.test(t)){extra.push(t);continue}
       if(t==='-'||t==='–')continue;
       var pp=/^\(?\s*parc(?:ela)?\.?\s*(\d{1,2})\s*(?:\/|de)\s*(\d{1,2})\s*\)?$/i.exec(t);if(pp&&!inst){inst=(+pp[1])+'/'+(+pp[2]);continue}
@@ -139,12 +153,14 @@ function parseLines(lines,dueMk){
       var pi=/^(?:parc(?:ela)?\.?\s*)?(\d{1,2})\s*(?:\/|de)\s*(\d{1,2})$/i.exec(t);if(pi&&!inst){inst=pi[1]+'/'+pi[2];continue}
       if(desc.length===0)desc.push(t);else if(/^\*/.test(t)&&!extra.length)desc.push(t);else extra.push(t);
     }
-    if(val===null||!desc.length)return;
+    if(val===null||!desc.length)continue;
     var description=desc.join(' ').replace(/\s+/g,' ').trim();
-    if(PAY_RE.test(description)&&val<0)return;           // pagamento da fatura anterior
-    if(PAY_RE.test(description)&&/deb|c\/c|recebido/i.test(description))return;
+    var ie=/\s(\d{2})\/(\d{2})$/.exec(description);if(ie&&!inst&&+ie[1]>=1&&+ie[1]<=+ie[2]&&+ie[2]<=99){inst=ie[1]+'/'+ie[2];description=description.slice(0,ie.index).trim()}
+    if(PAY_RE.test(description)&&val<0)continue;           // pagamento da fatura anterior
+    if(PAY_RE.test(description)&&/deb|c\/c|recebido/i.test(description))continue;
     var y=d.y?(d.y<100?2000+d.y:d.y):((d.mo>dueM||(inst&&d.mo===dueM))?dueY-1:dueY);
     out.push({date:y+'-'+String(d.mo).padStart(2,'0')+'-'+String(d.dd).padStart(2,'0'),description:description,place:extra.join(' '),amount:Math.round(val*100)/100,installment:inst,holder:holder,category:guessCat(description)});
+    }
   });
   var sum=Math.round(out.reduce(function(s,i){return s+i.amount},0)*100)/100;
   var match=totals.some(function(t){return Math.abs(t-sum)<0.01});
