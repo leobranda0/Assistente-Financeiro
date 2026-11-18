@@ -85,7 +85,7 @@ async function pdfLines(file){
     rows.forEach(function(r){
       r.items.sort(function(a,b){return a.x-b.x});
       var m=[];r.items.forEach(function(i){var l=m[m.length-1];if(l&&i.x-(l.x+l.w)<1.2&&i.x-(l.x+l.w)>-3){l.t+=i.t;l.w=i.x+i.w-l.x}else m.push({x:i.x,t:i.t,w:i.w})});
-      lines.push(m.map(function(i){return i.t}));
+      lines.push(m);
     });
   }
   return lines;
@@ -99,7 +99,16 @@ var PAY_RE=/(pagto|pagamento|pgto|pag fatura|credito de pagamento|pagamento rece
 function parseLines(lines,dueMk){
   var dueY=+dueMk.slice(0,4),dueM=+dueMk.slice(5,7);
   var out=[],holder=null,totals=[];
-  lines.forEach(function(tokens){
+  lines=lines.map(function(l){return l.map(function(o){return typeof o==='string'?{t:o,x:0,w:0}:o})});
+  // coluna do valor em R$: borda direita mais comum do 1º valor nas linhas com data
+  var edges={};
+  lines.forEach(function(l){
+    if(!l.length||!(DATE_RE.test(l[0].t)||DATE_TXT_RE.test(l[0].t)||/^\d{2}\/\d{2}\s/.test(l[0].t)))return;
+    for(var k=1;k<l.length;k++)if(isMoney(l[k].t)){var e=Math.round((l[k].x+l[k].w)/4)*4;edges[e]=(edges[e]||0)+1;break}
+  });
+  var colEdge=null,best=0;Object.keys(edges).forEach(function(e){if(edges[e]>best){best=edges[e];colEdge=+e}});
+  lines.forEach(function(objs){
+    var tokens=objs.map(function(o){return o.t});
     var joined=tokens.join(' ');
     // portador (cartão adicional): "NOME  Cartão 3747 XXXXXX 38277"
     var hm=/^(.*?)\s*cart[aã]o\s+(?:final\s+)?[\dX*•\. ]{4,}/i.exec(joined);
@@ -107,17 +116,23 @@ function parseLines(lines,dueMk){
     // totais impressos na fatura (para conferir a soma)
     if(/total/i.test(joined))tokens.forEach(function(t){if(isMoney(t))totals.push(Math.abs(money(t)))});
     // separa data colada na descrição: "02/10 APP *GWX20UVW"
-    var tk=tokens.slice();
-    var m0=/^(\d{2}\/\d{2})\s+(.+)$/.exec(tk[0]);if(m0)tk.splice(0,1,m0[1],m0[2]);
+    var to=objs.slice();
+    var m0=/^(\d{2}\/\d{2})\s+(.+)$/.exec(to[0].t);if(m0)to.splice(0,1,{t:m0[1],x:to[0].x,w:0},{t:m0[2],x:to[0].x,w:to[0].w});
+    var tk=to.map(function(o){return o.t});
     var d=null,start=1,mm;
     if((mm=DATE_RE.exec(tk[0]))){d={dd:+mm[1],mo:+mm[2],y:mm[3]?+mm[3]:null}}
     else if((mm=DATE_TXT_RE.exec(tk[0]))){d={dd:+mm[1],mo:MESES[mm[2].toLowerCase()],y:mm[3]?+mm[3]:null}}
     else if(tk.length>1&&(mm=DATE_TXT_RE.exec(tk[0]+' '+tk[1]))){d={dd:+mm[1],mo:MESES[mm[2].toLowerCase()],y:mm[3]?+mm[3]:null};start=2}
     if(!d||d.mo<1||d.mo>12||d.dd<1||d.dd>31)return;
+    // valor: o que estiver na coluna de R$ (evita pegar valor em moeda estrangeira ou da lateral)
+    var vi=-1,firstM=-1;
+    for(var k=start;k<to.length;k++){if(isMoney(to[k].t)){if(firstM<0)firstM=k;if(colEdge!==null&&to[k].w&&Math.abs(to[k].x+to[k].w-colEdge)<=14){vi=k;break}}}
+    if(vi<0)vi=firstM;
     var desc=[],extra=[],val=null,inst=null,i;
     for(i=start;i<tk.length;i++){
       var t=tk[i];
-      if(isMoney(t)){val=money(t);if(tk[i+1]==='-'||/^-\s*$/.test(tk[i+1]||''))val=-Math.abs(val);break}
+      if(i===vi){val=money(t);if(tk[i+1]==='-'||/^-\s*$/.test(tk[i+1]||''))val=-Math.abs(val);break}
+      if(isMoney(t)||/^[A-Z]{3}$/.test(t)&&/^(EUR|USD|GBP|ARS|CLP|CAD|AUD|JPY|CHF|MXN|UYU|COP|PEN)$/.test(t)||/^\d+,\d{3,}$/.test(t)){extra.push(t);continue}
       if(t==='-'||t==='–')continue;
       var pp=/^\(?\s*parc(?:ela)?\.?\s*(\d{1,2})\s*(?:\/|de)\s*(\d{1,2})\s*\)?$/i.exec(t);if(pp&&!inst){inst=(+pp[1])+'/'+(+pp[2]);continue}
       if(/^\d{1,2}\/\d{1,2}$/.test(t)&&!inst){inst=t;continue}
