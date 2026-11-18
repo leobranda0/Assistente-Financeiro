@@ -98,4 +98,6 @@ document.addEventListener('visibilitychange',function(){if(!document.hidden)setT
 })();
 
 window.takeNotice=takeNotice;
+// importação de faturas de cartão
+(function(){var s=document.createElement('script');s.src='fatura.js?v=1';document.head.appendChild(s)})();
 })();
